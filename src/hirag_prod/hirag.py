@@ -15,6 +15,7 @@ from hirag_prod._utils import (
 from hirag_prod.chunk import BaseChunk, FixTokenChunk
 from hirag_prod.configs.cli_options import CliOptions
 from hirag_prod.configs.functions import (
+    get_colbert_config,
     get_config_manager,
     get_hi_rag_config,
     get_llm_config,
@@ -40,6 +41,7 @@ from hirag_prod.parser import DictParser, ReferenceParser
 from hirag_prod.prompt import PROMPTS
 from hirag_prod.resources.functions import (
     get_chat_service,
+    get_colbert_client,
     get_embedding_service,
     get_translator,
     initialize_resource_manager,
@@ -49,6 +51,7 @@ from hirag_prod.schema import Chunk, File, Item, LoaderType, item_to_chunk
 from hirag_prod.storage import (
     BaseGDB,
     BaseVDB,
+    ColbertRemoteVDB,
     LanceDB,
     NetworkXGDB,
     RetrievalStrategyProvider,
@@ -495,6 +498,11 @@ class HiRAG:
                     embedding_func=get_embedding_service().create_embeddings,
                     strategy_provider=RetrievalStrategyProvider(),
                     vector_type="halfvec",
+                )
+            elif get_hi_rag_config().vdb_type == "colbert_remote":
+                vdb = ColbertRemoteVDB.create(
+                    client=get_colbert_client(),
+                    config=get_colbert_config(),
                 )
 
         # Build GDB by type

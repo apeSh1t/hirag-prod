@@ -2,6 +2,7 @@ import threading
 from typing import Dict, List, Optional
 
 from hirag_prod.configs.cloud_storage_config import AWSConfig, OSSConfig
+from hirag_prod.configs.colbert_config import ColbertConfig
 from hirag_prod.configs.document_loader_config import DoclingCloudConfig, DotsOCRConfig
 from hirag_prod.configs.embedding_config import EmbeddingConfig
 from hirag_prod.configs.envs import Envs
@@ -41,6 +42,7 @@ class ConfigManager:
         self._dots_ocr_config: Optional[DotsOCRConfig] = None
         self._aws_config: Optional[AWSConfig] = None
         self._oss_config: Optional[OSSConfig] = None
+        self._colbert_config: Optional[ColbertConfig] = None
 
         self.supported_languages: List[str] = ["en", "cn-s", "cn-t"]
         self.language: str = (
@@ -113,3 +115,10 @@ class ConfigManager:
         if not self._oss_config:
             self._oss_config = OSSConfig(**self.envs.model_dump())
         return self._oss_config
+
+    @property
+    def colbert_config(self) -> ColbertConfig:
+        """Getter for ColBERT configuration"""
+        if not self._colbert_config:
+            self._colbert_config = ColbertConfig(**self.envs.model_dump())
+        return self._colbert_config
