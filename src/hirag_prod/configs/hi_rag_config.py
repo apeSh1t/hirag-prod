@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
@@ -14,7 +14,7 @@ class HiRAGConfig(BaseSettings):
     # Database configuration
     vector_db_path: str = "kb/hirag.db"
     graph_db_path: str = "kb/hirag.gpickle"
-    vdb_type: Literal["lancedb", "pgvector"] = "pgvector"
+    vdb_type: Literal["lancedb", "pgvector", "colbert_remote"] = "pgvector"
     gdb_type: Literal["networkx", "neo4j"] = (
         "networkx"  # TODO: neo4j not implemented yet
     )
@@ -38,6 +38,15 @@ class HiRAGConfig(BaseSettings):
     similarity_threshold: float = 0.5
     similarity_max_difference: float = 0.15
     max_references: int = 3
+
+    # ColBERT remote configuration (used when vdb_type == "colbert_remote")
+    colbert_base_url: Optional[str] = None
+    colbert_api_key: Optional[str] = None
+    colbert_index_prefix: str = "hirag"
+    colbert_default_index_name: Optional[str] = None
+    colbert_timeout: float = 30.0
+    colbert_max_retries: int = 3
+    colbert_retry_backoff_seconds: float = 1.0
 
     max_chunk_ids_per_query: int = 10
     default_query_top_k: int = 10

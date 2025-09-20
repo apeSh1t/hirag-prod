@@ -32,6 +32,16 @@ class Envs(BaseSettings):
     EMBEDDING_DIMENSION: int
     USE_HALF_VEC: bool = True
 
+    VDB_TYPE: Literal["lancedb", "pgvector", "colbert_remote"] = "pgvector"
+
+    COLBERT_BASE_URL: Optional[str] = None
+    COLBERT_API_KEY: Optional[str] = None
+    COLBERT_INDEX_PREFIX: str = "hirag"
+    COLBERT_DEFAULT_INDEX_NAME: Optional[str] = None
+    COLBERT_TIMEOUT: float = 30.0
+    COLBERT_MAX_RETRIES: int = 3
+    COLBERT_RETRY_BACKOFF_SECONDS: float = 1.0
+
     EMBEDDING_SERVICE_TYPE: Literal["openai", "local"] = "openai"
     EMBEDDING_BASE_URL: Optional[str] = None
     EMBEDDING_API_KEY: Optional[str] = None
@@ -117,6 +127,18 @@ class Envs(BaseSettings):
                 raise ValueError(
                     "LOCAL_LLM_API_KEY is required when LLM_SERVICE_TYPE is local"
                 )
+        if self.VDB_TYPE == "colbert_remote":
+            if not self.COLBERT_BASE_URL:
+                raise ValueError(
+                    "COLBERT_BASE_URL is required when VDB_TYPE is colbert_remote"
+                )
+            if self.COLBERT_TIMEOUT <= 0:
+                raise ValueError("COLBERT_TIMEOUT must be positive")
+            if self.COLBERT_MAX_RETRIES < 0:
+                raise ValueError("COLBERT_MAX_RETRIES must be non-negative")
+            if self.COLBERT_RETRY_BACKOFF_SECONDS <= 0:
+                raise ValueError("COLBERT_RETRY_BACKOFF_SECONDS must be positive")
+
         return self
 
     def __init__(self, **kwargs):

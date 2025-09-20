@@ -4,6 +4,7 @@ import os
 import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import httpx
 import nltk
 from googletrans import Translator
 from redis.asyncio import ConnectionPool, Redis
@@ -75,6 +76,11 @@ class ResourceManager:
             resource_dict.get("reranker", None) if resource_dict else None
         )
 
+        # ColBERT HTTP client
+        self._colbert_client: Optional[httpx.AsyncClient] = (
+            resource_dict.get("colbert_client") if resource_dict else None
+        )
+
         # Cleanup operation list
         self._cleanup_operation_list: List[Tuple[str, Any]] = []
 
@@ -142,6 +148,12 @@ class ResourceManager:
                 # Initialize Reranker
                 if not self._reranker:
                     self._reranker = create_reranker()
+
+                if (
+                    get_hi_rag_config().vdb_type == "colbert_remote"
+                    and not self._colbert_client
+                ):
+                    await self._initialize_colbert_client()
 
                 # Reverse the cleanup operation list to ensure proper cleanup
                 self._cleanup_operation_list.reverse()
@@ -243,6 +255,33 @@ class ResourceManager:
         finally:
             await redis_client.aclose()
 
+    async def _initialize_colbert_client(self) -> None:
+        """Initialize shared HTTP client for ColBERT remote service."""
+
+        async def _cleanup() -> None:
+            if self._colbert_client:
+                try:
+                    await self._colbert_client.aclose()
+                finally:
+                    self._colbert_client = None
+
+        if any(name == "colbert_client" for name, _ in self._cleanup_operation_list):
+            return
+
+        config = get_config_manager().colbert_config
+        headers: Dict[str, str] = {}
+        if config.api_key:
+            headers["Authorization"] = f"Bearer {config.api_key}"
+
+        timeout = httpx.Timeout(config.timeout)
+        self._colbert_client = httpx.AsyncClient(
+            base_url=config.base_url,
+            headers=headers,
+            timeout=timeout,
+        )
+
+        self._cleanup_operation_list.append(("colbert_client", _cleanup))
+
     def is_initialized(self) -> bool:
         """Determine whether this instance is initialized."""
         return self._initialized
@@ -290,6 +329,14 @@ class ResourceManager:
         if self._reranker is None:
             raise RuntimeError("Reranker not initialized. Call initialize() first.")
         return self._reranker
+
+    def get_colbert_client(self) -> httpx.AsyncClient:
+        """Get the shared ColBERT HTTP client."""
+        if self._colbert_client is None:
+            raise RuntimeError(
+                "ColBERT client not initialized. Ensure ResourceManager.initialize was called and VDB_TYPE is colbert_remote."
+            )
+        return self._colbert_client
 
     async def cleanup(self, ensure_init_lock: bool = True) -> None:
         try:

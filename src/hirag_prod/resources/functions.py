@@ -86,3 +86,7 @@ def get_chat_service():
 
 def get_embedding_service():
     return get_resource_manager().get_embedding_service()
+
+
+def get_colbert_client():
+    return get_resource_manager().get_colbert_client()
