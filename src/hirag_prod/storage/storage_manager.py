@@ -210,7 +210,12 @@ class StorageManager:
             elif isinstance(self.vdb, PGVector):
                 async with get_resource_manager().get_session_maker()() as s:
                     await s.execute(select(1))
-            health["vdb"] = True
+            elif hasattr(self.vdb, "health_check"):
+                health["vdb"] = await self.vdb.health_check()
+            else:
+                health["vdb"] = True
+            if "vdb" not in health:
+                health["vdb"] = True
         except Exception as e:
             log_error_info(logging.WARNING, "VDB health check failed", e)
             health["vdb"] = False

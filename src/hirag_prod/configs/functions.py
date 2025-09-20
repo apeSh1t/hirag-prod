@@ -2,6 +2,7 @@ from typing import Dict, Literal, Optional, Union
 
 from hirag_prod.configs.cloud_storage_config import AWSConfig, OSSConfig
 from hirag_prod.configs.config_manager import ConfigManager
+from hirag_prod.configs.colbert_config import ColbertConfig
 from hirag_prod.configs.document_loader_config import DoclingCloudConfig, DotsOCRConfig
 from hirag_prod.configs.embedding_config import EmbeddingConfig
 from hirag_prod.configs.envs import Envs, InitEnvs
@@ -40,6 +41,10 @@ def get_reranker_config() -> RerankConfig:
 
 def get_init_config() -> InitEnvs:
     return INIT_CONFIG
+
+
+def get_colbert_config() -> ColbertConfig:
+    return ConfigManager().colbert_config
 
 
 def get_document_converter_config(
