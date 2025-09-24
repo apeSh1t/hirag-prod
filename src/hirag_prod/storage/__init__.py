@@ -11,6 +11,7 @@ from hirag_prod.storage.lancedb import LanceDB
 from hirag_prod.storage.networkx import NetworkXGDB
 from hirag_prod.storage.redis_utils import DocumentStatus, RedisStorageManager
 from hirag_prod.storage.retrieval_strategy_provider import RetrievalStrategyProvider
+from hirag_prod.storage.colbert_vdb import ColBERTVDB
 
 __all__ = [
     "LanceDB",
@@ -20,4 +21,5 @@ __all__ = [
     "RetrievalStrategyProvider",
     "RedisStorageManager",
     "DocumentStatus",
+    "ColBERTVDB",
 ]

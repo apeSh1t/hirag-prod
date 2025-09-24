@@ -56,6 +56,7 @@ from hirag_prod.storage import (
     LanceDB,
     NetworkXGDB,
     RetrievalStrategyProvider,
+    ColBERTVDB,
 )
 from hirag_prod.storage.pgvector import PGVector
 from hirag_prod.storage.query_service import QueryService
@@ -624,6 +625,16 @@ class HiRAG:
                     strategy_provider=RetrievalStrategyProvider(),
                     vector_type="halfvec",
                 )
+            elif get_hi_rag_config().vdb_type == "colbert":
+                # 创建ColBERT VDB实例
+                # 注意：ColBERT相关配置应该通过环境变量或单独配置文件提供
+                vdb = ColBERTVDB(
+                    colbert_host=os.getenv("COLBERT_HOST", "localhost"),
+                    colbert_port=int(os.getenv("COLBERT_PORT", "8893")),
+                    doc_maxlen=int(os.getenv("COLBERT_DOC_MAXLEN", "300")),
+                    nbits=int(os.getenv("COLBERT_NBITS", "2")),
+                )
+                await vdb._init_vdb()
 
         # Build GDB by type
         if gdb is None:
