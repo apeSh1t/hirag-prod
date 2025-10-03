@@ -13,13 +13,6 @@ class CliOptions:
             help="Test to run. Options: 1/wiki_subcorpus, 2/s3: small_pdf (default), 3/oss: U.S.Health, 4/md-itinerary, 5/md-wiki",
         )
         parser.add_argument(
-            "--overwrite",
-            type=str,
-            default="T",
-            choices=["T", "F", "True", "False", "true", "false"],
-            help="Whether to overwrite existing documents in the knowledge base (default: T). Options: T/F, True/False, true/false",
-        )
-        parser.add_argument(
             "--summary",
             type=str,
             default="T",
@@ -32,6 +25,13 @@ class CliOptions:
             default="dots_ocr",
             help="Loader type to use for document processing (default: dots_ocr)",
         )
+        parser.add_argument(
+            "--save-json",
+            type=str,
+            default="F",
+            choices=["T", "F", "True", "False", "true", "false"],
+            help="Whether to save retrieved chunks to JSON file (default: F). Options: T/F, True/False, true/false",
+        )
 
         try:
             args: Namespace = parser.parse_known_args()[0]
@@ -40,14 +40,14 @@ class CliOptions:
             args = argparse.Namespace(
                 debug=False,
                 test="2",
-                overwrite="T",
                 summary="T",
+                save_json="F",
             )
 
         self.debug: bool = args.debug
         self.test: str = args.test
-        self.overwrite: bool = self._parse_bool_string(args.overwrite)
         self.summary: bool = self._parse_bool_string(args.summary)
+        self.save_json: bool = self._parse_bool_string(args.save_json)
 
     def _parse_bool_string(self, value: str) -> bool:
         """Convert string representation to boolean."""

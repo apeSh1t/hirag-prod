@@ -1,10 +1,15 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Literal, Optional, Union
+from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+
+import numpy as np
 
 from hirag_prod._utils import log_error_info
+from hirag_prod.cluster import HierarchicalClustering
 from hirag_prod.configs.functions import get_hi_rag_config
 from hirag_prod.reranker.utils import apply_reranking
+from hirag_prod.schema.vector_config import use_halfvec
 from hirag_prod.storage.storage_manager import StorageManager
 
 logger = logging.getLogger("HiRAG")
@@ -20,6 +25,136 @@ class QueryService:
         """Query chunks via unified storage"""
         return await self.storage.query_chunks(*args, **kwargs)
 
+    async def apply_clustering(
+        self, workspace_id: str, knowledge_base_id: str, chunk_ids: List[str]
+    ) -> Dict[str, Any]:
+        """Apply clustering to the given chunks."""
+        if not chunk_ids:
+            return {"clusters": {}, "chunk_ids": [], "cluster_info": {}}
+
+        try:
+            # Get embeddings for the chunk IDs
+            embeddings_dict = await self.query_chunk_embeddings(
+                workspace_id, knowledge_base_id, chunk_ids
+            )
+
+            # Extract valid embeddings and corresponding chunk IDs
+            embeddings = []
+            valid_chunk_ids = []
+
+            for chunk_id in chunk_ids:
+                vector = embeddings_dict.get(chunk_id)
+                if vector is not None:
+                    embeddings.append(vector)
+                    valid_chunk_ids.append(chunk_id)
+                else:
+                    logger.warning(f"Chunk {chunk_id} has no vector data, skipping")
+
+            if not embeddings:
+                logger.warning("No valid embeddings found in chunks")
+                return {"clusters": {}, "chunk_ids": [], "cluster_info": {}}
+
+            # Convert to numpy array for clustering
+            feature_matrix = np.array(embeddings)
+
+            # Initialize hierarchical clustering
+            # Use distance threshold to automatically determine number of clusters
+            if get_hi_rag_config().clustering_n_type == "fixed":
+                clustering = HierarchicalClustering(
+                    n_clusters=get_hi_rag_config().clustering_n_clusters,
+                    linkage_method=get_hi_rag_config().clustering_linkage_method,
+                )
+            else:
+                clustering = HierarchicalClustering(
+                    linkage_method=get_hi_rag_config().clustering_linkage_method,
+                    distance_threshold=get_hi_rag_config().clustering_distance_threshold,
+                )
+
+            # Fit the clustering model
+            cluster_labels, _, _, _ = clustering.fit(feature_matrix)
+
+            # Organize chunks by cluster
+            clusters = {}
+            for i, label in enumerate(cluster_labels):
+                cluster_id = f"cluster_{label}"
+                if cluster_id not in clusters:
+                    clusters[cluster_id] = []
+
+                # Find the original chunk data
+                chunk_key = valid_chunk_ids[i]
+                clusters[cluster_id].append(chunk_key)
+
+            # Get cluster information
+            cluster_info = clustering.get_cluster_info()
+
+            return {
+                "clusters": clusters,
+                "chunk_ids": valid_chunk_ids,
+                "cluster_info": {
+                    "n_clusters": cluster_info.get("n_clusters", 0),
+                    "silhouette_score": cluster_info.get("silhouette_score"),
+                    "total_chunks": len(valid_chunk_ids),
+                },
+            }
+
+        except Exception as e:
+            log_error_info(logging.ERROR, "Failed to apply clustering to chunks", e)
+            return {"clusters": {}, "chunk_ids": [], "cluster_info": {}}
+
+    async def filter_chunks_by_cluster(
+        self, workspace_id: str, knowledge_base_id: str, chunks: List[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        # Apply clustering
+        chunk_ids = [
+            chunk.get("documentKey") for chunk in chunks if chunk.get("documentKey")
+        ]
+        cluster_res = await self.apply_clustering(
+            workspace_id, knowledge_base_id, chunk_ids
+        )
+
+        clusters = cluster_res.get("clusters", {})
+        cluster_info = cluster_res.get("cluster_info", {})
+        # Print cluster info
+        logger.info(f"Clustering result: {cluster_info}")
+        if not clusters:
+            return chunks
+
+        # Id to chunk map
+        id_to_chunk = {
+            chunk.get("documentKey"): chunk
+            for chunk in chunks
+            if chunk.get("documentKey")
+        }
+
+        # Among a cluster, keep the chunk which is the latest in extractedTime and all other chunks that have the same fileName are kept
+        filtered_chunks = []
+        outlier_chunks = []
+        for cluster_id, chunk_keys in clusters.items():
+            latest_chunks = []
+            for chunk_key in chunk_keys:
+                chunk = id_to_chunk.get(chunk_key)
+                if chunk:
+                    if not latest_chunks or chunk.get(
+                        "extractedTimestamp", datetime.min
+                    ) > latest_chunks[0].get("extractedTimestamp", datetime.min):
+                        latest_chunks = [chunk]
+                    elif chunk.get("extractedTimestamp", datetime.min) == latest_chunks[
+                        0
+                    ].get("extractedTimestamp", datetime.min):
+                        latest_chunks.append(chunk)
+            # According to logic, all chunks in latest_chunks should have the same fileName
+            filtered_chunks.extend(latest_chunks)
+
+        for chunk in chunks:
+            if chunk not in filtered_chunks:
+                outlier_chunks.append(chunk)
+
+        logger.info(
+            f"After clustering filter: {len(filtered_chunks)} chunks kept, {len(outlier_chunks)} outliers"
+        )
+
+        return filtered_chunks, outlier_chunks
+
     async def recall_chunks(self, *args, **kwargs) -> Dict[str, Any]:
         """Recall chunks and return both raw results and extracted chunk_ids.
 
@@ -28,9 +163,29 @@ class QueryService:
                 - "chunks": raw chunk search results
                 - "chunk_ids": list of document_key values
         """
+        # Extract workspace_id and knowledge_base_id from kwargs for clustering
+        filter_by_clustering = kwargs.pop("filter_by_clustering", False)
+        workspace_id = kwargs.get("workspace_id")
+        knowledge_base_id = kwargs.get("knowledge_base_id")
+
         chunks = await self.query_chunks(*args, **kwargs)
         chunk_ids = [c.get("documentKey") for c in chunks if c.get("documentKey")]
-        return {"chunks": chunks, "chunk_ids": chunk_ids}
+
+        if filter_by_clustering:
+            if not workspace_id or not knowledge_base_id:
+                logger.warning(
+                    "workspace_id and knowledge_base_id are required for clustering filter"
+                )
+            else:
+                chunks, outlier_chunks = await self.filter_chunks_by_cluster(
+                    workspace_id, knowledge_base_id, chunks
+                )
+
+        return {
+            "chunks": chunks,
+            "chunk_ids": chunk_ids,
+            "outlier_chunks": outlier_chunks,
+        }
 
     async def query_triplets(self, *args, **kwargs) -> List[Dict[str, Any]]:
         """Query relations using unified storage"""
@@ -68,6 +223,7 @@ class QueryService:
                 chunk_ids=chunk_ids,
                 workspace_id=workspace_id,
                 knowledge_base_id=knowledge_base_id,
+                columns_to_select=["documentKey", "vector"],
             )
             for row in rows:
                 key = row.get("documentKey")
@@ -76,6 +232,11 @@ class QueryService:
                 elif key:
                     logger.warning(f"Chunk {key} has no vector data")
                     res[key] = None
+            if use_halfvec:
+                # Convert HalfVector to List[float] for JSON serialization
+                for k in res:
+                    if res[k] is not None:
+                        res[k] = res[k].to_list()
         except Exception as e:
             log_error_info(logging.ERROR, "Failed to query chunk embeddings", e)
             return {}
@@ -91,15 +252,6 @@ class QueryService:
         """Fetch chunk rows by document_key list, preserving input order where possible."""
         if not chunk_ids:
             return []
-        if columns_to_select is None:
-            columns_to_select = [
-                "text",
-                "uri",
-                "fileName",
-                "private",
-                "updatedAt",
-                "documentKey",
-            ]
         rows = await self.storage.query_by_keys(
             chunk_ids=chunk_ids,
             workspace_id=workspace_id,
@@ -115,6 +267,7 @@ class QueryService:
         query: Union[str, List[str]],
         workspace_id: str,
         knowledge_base_id: str,
+        filter_by_clustering: bool,
         topk: Optional[int] = None,
         topn: Optional[int] = None,
         link_top_k: Optional[int] = None,
@@ -145,6 +298,7 @@ class QueryService:
             topn=topn,
             workspace_id=workspace_id,
             knowledge_base_id=knowledge_base_id,
+            filter_by_clustering=filter_by_clustering,
         )
         query_chunks = chunk_recall["chunks"]
         query_chunk_ids = chunk_recall["chunk_ids"]
@@ -264,12 +418,18 @@ class QueryService:
         pr_rows = await self.get_chunks_by_ids(
             pr_ids, workspace_id=workspace_id, knowledge_base_id=knowledge_base_id
         )
+
+        pr_rows, outlier_rows = await self.filter_chunks_by_cluster(
+            workspace_id, knowledge_base_id, pr_rows
+        )
+
         pr_score_map = {cid: score for cid, score in pr_ranked}
         for row in pr_rows:
             row["pagerank_score"] = pr_score_map.get(row.get("documentKey"), 0.0)
 
         return {
             "pagerank": pr_rows,
+            "outlier_chunks": outlier_rows,
             "query_top": query_chunks,
         }
 
@@ -278,6 +438,7 @@ class QueryService:
         query: Union[str, List[str]],
         workspace_id: str,
         knowledge_base_id: str,
+        filter_by_clustering: bool,
         topk: Optional[int] = None,
         topn: Optional[int] = None,
     ) -> Dict[str, Any]:
@@ -292,6 +453,7 @@ class QueryService:
             topn=topn,
             workspace_id=workspace_id,
             knowledge_base_id=knowledge_base_id,
+            filter_by_clustering=filter_by_clustering,
         )
         query_chunks = chunk_recall["chunks"]
 
@@ -303,6 +465,7 @@ class QueryService:
                     results=query_chunks,
                     topk=topk,
                     topn=topn,
+                    rerank_with_time=True,
                 )
                 query_chunks = reranked_chunks
             except Exception as e:
@@ -317,6 +480,7 @@ class QueryService:
         workspace_id: str,
         knowledge_base_id: str,
         query: Union[str, List[str]],
+        filter_by_clustering: bool,
         strategy: Literal["pagerank", "reranker", "hybrid"] = "hybrid",
         topk: Optional[int] = None,
         topn: Optional[int] = None,
@@ -329,6 +493,7 @@ class QueryService:
                 query=query,
                 workspace_id=workspace_id,
                 knowledge_base_id=knowledge_base_id,
+                filter_by_clustering=filter_by_clustering,
             )
             result["chunks"] = result.get("query_top", [])
             return result
@@ -339,6 +504,7 @@ class QueryService:
                 query=query,
                 workspace_id=workspace_id,
                 knowledge_base_id=knowledge_base_id,
+                filter_by_clustering=filter_by_clustering,
             )
             result["chunks"] = (
                 result.get("pagerank")
@@ -354,6 +520,7 @@ class QueryService:
                 query=query,
                 workspace_id=workspace_id,
                 knowledge_base_id=knowledge_base_id,
+                filter_by_clustering=filter_by_clustering,
             )
 
             # Use pagerank results if available, otherwise fall back to query_top
@@ -373,6 +540,7 @@ class QueryService:
                         results=chunks_to_rerank,
                         topk=topk,
                         topn=topn,
+                        rerank_with_time=True,
                     )
                     chunks_to_rerank = reranked_chunks
                 except Exception as e:

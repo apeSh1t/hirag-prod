@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Dict, List, Union
 
 import httpx
@@ -16,15 +17,23 @@ class ApiReranker(Reranker):
         query: Union[str, List[str]],
         items: List[Dict],
         key: str = "text",
+        rerank_with_time=False,
     ) -> List[Dict]:
         if not items:
             return []
 
-        documents = [item.get(key, "") for item in items]
+        if rerank_with_time:
+            documents = [
+                f"{item.get(key, '')}\n\n[Timestamp: {item.get('extractedTimestamp', 'N/A')}]"
+                for item in items
+            ]
+            query = f"{query}\n\n[Timestamp: {datetime.now().isoformat()}]"
+        else:
+            documents = [item.get(key, "") for item in items]
 
         # Handle single query case
         if isinstance(query, str):
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=3600.0) as client:
                 response = await client.post(
                     self.endpoint,
                     headers={"Authorization": f"Bearer {self.api_key}"},
@@ -52,7 +61,7 @@ class ApiReranker(Reranker):
             # Initialize scores for each document
             max_scores = {}
 
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=3600.0) as client:
                 # Process each query and track maximum scores
                 for single_query in query:
                     response = await client.post(

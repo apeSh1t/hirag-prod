@@ -1,6 +1,7 @@
 """Local deployment reranker implementation"""
 
 import logging
+from datetime import datetime
 from typing import Dict, List, Union
 
 import httpx
@@ -15,7 +16,7 @@ class LocalReranker(Reranker):
         model_name: str,
         entry_point: str,
         auth_token: str,
-        timeout: int = 30,
+        timeout: int = 3600,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model_name = model_name
@@ -77,11 +78,19 @@ class LocalReranker(Reranker):
         query: Union[str, List[str]],
         items: List[Dict],
         key: str = "text",
+        rerank_with_time=False,
     ) -> List[Dict]:
         if not items:
             return []
 
-        docs = [item.get(key, "") for item in items]
+        if rerank_with_time:
+            docs = [
+                f"{item.get(key, '')}\n\n[Timestamp: {item.get('extractedTimestamp', 'N/A')}]"
+                for item in items
+            ]
+            query = f"{query}\n\n[Timestamp: {datetime.now().isoformat()}]"
+        else:
+            docs = [item.get(key, "") for item in items]
 
         # Handle single query case
         if isinstance(query, str):
